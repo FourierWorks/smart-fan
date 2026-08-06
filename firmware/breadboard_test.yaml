@@ -1,0 +1,85 @@
+# Board: AZ-Delivery ESP-32 Dev Kit C V4
+# Definition: definitions/boards/az-delivery-devkit-v4/manifest.yaml
+
+esphome:
+  name: fan-controller
+  friendly_name: fan-controller
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# ------------------------------------------------
+
+captive_portal:
+
+# ---- Stage 1 diagnostics: prove the API link is alive ----
+
+# Uptime: a value that visibly increments in HA
+sensor:
+  - platform: uptime
+    name: "Uptime"
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+
+# A global holding the current blink interval in milliseconds (0 = off)
+globals:
+  - id: blink_period_ms
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+switch:
+  - platform: gpio
+    pin: GPIO25
+    name: "ON/OFF"
+
+  - platform: gpio
+    pin: GPIO26
+    id: opto2
+
+# A repeating timer that toggles the opto when a blink period is set
+interval:
+  - interval: 50ms          # base tick; fine-grained enough for our speeds
+    then:
+      - lambda: |-
+          static uint32_t last = 0;
+          static bool on = false;
+          if (id(blink_period_ms) == 0) {
+            // Off: make sure LED is off and reset
+            if (on) { id(opto2).turn_off(); on = false; }
+            return;
+          }
+          uint32_t now = millis();
+          if (now - last >= (uint32_t) id(blink_period_ms)) {
+            last = now;
+            on = !on;
+            if (on) id(opto2).turn_on(); else id(opto2).turn_off();
+          }
+
+# The 4-option speed selector -> sets the blink period
+select:
+  - platform: template
+    name: "Speed"
+    id: opto2_speed
+    optimistic: true
+    options:
+      - "Off"
+      - "Low"
+      - "Medium"
+      - "High"
+    initial_option: "Off"
+    set_action:
+      - lambda: |-
+          if      (x == "Off")    id(blink_period_ms) = 0;
+          else if (x == "Low")    id(blink_period_ms) = 1000;   // toggle each 1000ms -> slow
+          else if (x == "Medium") id(blink_period_ms) = 400;
+          else if (x == "High")   id(blink_period_ms) = 150;    // fast
