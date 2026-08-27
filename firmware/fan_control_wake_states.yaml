@@ -1,0 +1,336 @@
+esphome:
+  name: fan
+  friendly_name: fan
+
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          id(fan_power_state_fb).publish_state(false);
+          id(fan_mode_state_fb).publish_state("Unknown");
+          id(oscillation_state_fb).publish_state("Stopped");
+
+################################################
+captive_portal:
+
+# ---- Stage 1 diagnostics: prove the API link is alive ----
+
+# Uptime: a value that visibly increments in HA
+sensor:
+  - platform: uptime
+    name: "Uptime"
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+  # STATE INDICATORS (Dashboard)
+  - platform: template
+    name: "Speed State"
+    id: fan_mode_state_fb
+  - platform: template
+    name: "Oscillation State"
+    id: oscillation_state_fb
+
+
+# ================= GLOBALS =================
+globals:
+  - id: power_on
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: fan_mode              # 0 = unknown, 1..5 = Speed1,Speed2,Speed3,Sleep,Natural
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: oscillating
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: last_press_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: never_pressed
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: anchor_mode           # fallback ONLY when fan_mode is still unknown (fresh boot)
+    type: int
+    restore_value: no
+    initial_value: '1'
+  - id: pending_wake
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: target_mode
+    type: int
+    restore_value: no
+    initial_value: '1'
+
+# ================= OUTPUTS =================
+output:
+  - platform: gpio
+    pin: GPIO32
+    id: sw71_out        # power
+  - platform: gpio
+    pin: GPIO25
+    id: sw72_out        # speed / mode
+  - platform: gpio
+    pin: GPIO27
+    id: sw73_out        # oscillation
+  - platform: gpio
+    pin: GPIO14
+    id: sw74_out        # timer
+
+# ================= TUNABLES =================
+number:
+  - platform: template
+    name: "Press Pulse ms"
+    id: press_pulse_ms
+    optimistic: true
+    min_value: 40
+    max_value: 500
+    step: 10
+    initial_value: 120
+    mode: box
+  - platform: template
+    name: "Press Gap ms"
+    id: press_gap_ms
+    optimistic: true
+    min_value: 50
+    max_value: 1000
+    step: 25
+    initial_value: 250
+    mode: box
+  - platform: template
+    name: "Wake Threshold s"
+    id: wake_threshold_s
+    optimistic: true
+    min_value: 10
+    max_value: 120
+    step: 5
+    initial_value: 60
+    mode: box
+
+# ================= CORE PRESS SCRIPT =================
+script:
+  - id: press_button
+    mode: queued
+    parameters:
+      which: int
+      count: int
+      is_power_on_cmd: bool
+      set_power: int   # -1 = leave alone, 0 = off, 1 = on
+      set_osc: int      # -1 = leave alone, 0 = stopped, 1 = rotating
+      set_mode: int      # -1 = leave alone, 1..5 = target mode
+    then:
+      - lambda: |-
+          bool need_wake = false;
+          if (!is_power_on_cmd) {
+            need_wake = id(never_pressed) ||
+                ((millis() - id(last_press_ms)) >=
+                 (uint32_t)(id(wake_threshold_s).state * 1000.0));
+          }
+          id(pending_wake) = need_wake;
+      - if:
+          condition:
+            lambda: 'return id(pending_wake);'
+          then:
+            - lambda: |-
+                switch (which) {
+                  case 1: id(sw71_out).turn_on(); break;
+                  case 2: id(sw72_out).turn_on(); break;
+                  case 3: id(sw73_out).turn_on(); break;
+                  case 4: id(sw74_out).turn_on(); break;
+                }
+            - delay: !lambda 'return (int) id(press_pulse_ms).state;'
+            - lambda: |-
+                switch (which) {
+                  case 1: id(sw71_out).turn_off(); break;
+                  case 2: id(sw72_out).turn_off(); break;
+                  case 3: id(sw73_out).turn_off(); break;
+                  case 4: id(sw74_out).turn_off(); break;
+                }
+                id(last_press_ms) = millis();
+                id(never_pressed) = false;
+            - delay: !lambda 'return (int) id(press_gap_ms).state;'
+      - repeat:
+          count: !lambda 'return (count < 0) ? 0 : (count > 8 ? 8 : count);'
+          then:
+            - lambda: |-
+                switch (which) {
+                  case 1: id(sw71_out).turn_on(); break;
+                  case 2: id(sw72_out).turn_on(); break;
+                  case 3: id(sw73_out).turn_on(); break;
+                  case 4: id(sw74_out).turn_on(); break;
+                }
+            - delay: !lambda 'return (int) id(press_pulse_ms).state;'
+            - lambda: |-
+                switch (which) {
+                  case 1: id(sw71_out).turn_off(); break;
+                  case 2: id(sw72_out).turn_off(); break;
+                  case 3: id(sw73_out).turn_off(); break;
+                  case 4: id(sw74_out).turn_off(); break;
+                }
+                id(last_press_ms) = millis();
+                id(never_pressed) = false;
+            - delay: !lambda 'return (int) id(press_gap_ms).state;'
+      # --- state update happens HERE, guaranteed, no external wait needed ---
+      - lambda: |-
+          if (set_power != -1) {
+            id(power_on) = (set_power == 1);
+            id(fan_power_state_fb).publish_state(id(power_on));
+          }
+          if (set_osc != -1) {
+            id(oscillating) = (set_osc == 1);
+            id(oscillation_state_fb).publish_state(id(oscillating) ? "Rotating" : "Stopped");
+          }
+          if (set_mode != -1) {
+            id(fan_mode) = set_mode;
+            std::string name = "Unknown";
+            switch (set_mode) {
+              case 1: name = "Speed 1"; break;
+              case 2: name = "Speed 2"; break;
+              case 3: name = "Speed 3"; break;
+              case 4: name = "Sleep";   break;
+              case 5: name = "Natural"; break;
+            }
+            id(fan_mode_state_fb).publish_state(name);
+          }
+
+# ================= STATE INDICATORS (dashboard) =================
+binary_sensor:
+  - platform: template
+    name: "Power State"
+    id: fan_power_state_fb
+    device_class: power
+
+# ================= POWER =================
+switch:
+  - platform: template
+    name: "Power"
+    id: fan_power
+    optimistic: true
+    turn_on_action:
+      - if:
+          condition:
+            lambda: 'return !id(power_on);'
+          then:
+            - script.execute:
+                id: press_button
+                which: 1
+                count: 1
+                is_power_on_cmd: true
+                set_power: 1
+                set_osc: -1
+                set_mode: -1
+    turn_off_action:
+      - if:
+          condition:
+            lambda: 'return id(power_on);'
+          then:
+            - script.execute:
+                id: press_button
+                which: 1
+                count: 1
+                is_power_on_cmd: false
+                set_power: 0
+                set_osc: -1
+                set_mode: -1
+
+  - platform: template
+    name: "Oscillation"
+    id: fan_oscillation
+    optimistic: true
+    icon: mdi:arrow-left-right
+    turn_on_action:
+      - if:
+          condition:
+            lambda: 'return id(power_on);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return !id(oscillating);'
+                then:
+                  - script.execute:
+                      id: press_button
+                      which: 3
+                      count: 1
+                      is_power_on_cmd: false
+                      set_power: -1
+                      set_osc: 1
+                      set_mode: -1
+          else:
+            - lambda: 'id(fan_oscillation).publish_state(id(oscillating));'
+    turn_off_action:
+      - if:
+          condition:
+            lambda: 'return id(power_on);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(oscillating);'
+                then:
+                  - script.execute:
+                      id: press_button
+                      which: 3
+                      count: 1
+                      is_power_on_cmd: false
+                      set_power: -1
+                      set_osc: 0
+                      set_mode: -1
+          else:
+            - lambda: 'id(fan_oscillation).publish_state(id(oscillating));'
+
+# ================= SPEED / MODE =================
+select:
+  - platform: template
+    name: "Speed"
+    id: fan_mode_select
+    optimistic: true
+    options:
+      - "Speed 1"
+      - "Speed 2"
+      - "Speed 3"
+      - "Sleep"
+      - "Natural"
+    initial_option: "Speed 1"
+    set_action:
+      - lambda: |-
+          int t = 1;
+          if      (x == "Speed 1") t = 1;
+          else if (x == "Speed 2") t = 2;
+          else if (x == "Speed 3") t = 3;
+          else if (x == "Sleep")   t = 4;
+          else if (x == "Natural") t = 5;
+          id(target_mode) = t;
+      - if:
+          condition:
+            lambda: 'return !id(power_on);'
+          then:
+            - lambda: |-
+                int m = (id(fan_mode) == 0) ? id(anchor_mode) : id(fan_mode);
+                std::string name = "Speed 1";
+                switch (m) {
+                  case 1: name = "Speed 1"; break;
+                  case 2: name = "Speed 2"; break;
+                  case 3: name = "Speed 3"; break;
+                  case 4: name = "Sleep";   break;
+                  case 5: name = "Natural"; break;
+                }
+                id(fan_mode_select).publish_state(name);
+          else:
+            - lambda: 'if (id(fan_mode) == 0) id(fan_mode) = id(anchor_mode);'
+            - script.execute:
+                id: press_button
+                which: 2
+                count: !lambda 'return (id(target_mode) - id(fan_mode) + 5) % 5;'
+                is_power_on_cmd: false
+                set_power: -1
+                set_osc: -1
+                set_mode: !lambda 'return id(target_mode);'
