@@ -1,6 +1,6 @@
-# Requirements — Smart Fan Retrofit (Philips CX2550/00)
+# Requirements - Smart Fan Retrofit (Philips CX2550/00)
 
-*Status: locked. All open questions resolved from bench measurements and manual.*
+
 
 ## 1. Project goal
 
@@ -12,12 +12,12 @@ the modification is fully reversible.
 An added ESP32 running ESPHome electronically "presses" the fan's four existing
 buttons via optocouplers. It integrates with Home Assistant (on a Raspberry Pi)
 over the native ESPHome API. Home Assistant provides the UI, dashboards,
-automations and scheduling — there is no custom app/PWA.
+automations and scheduling ; there is no custom app/PWA.
 
 **Control is open-loop (no feedback):** LED sensing was evaluated and dropped
 (see §5). The ESP32 tracks state internally rather than reading it back.
 
-## 2. Target hardware (the fan) — as measured
+## 2. Target hardware (the fan)  as measured
 
 | Item | Detail |
 | --- | --- |
@@ -31,16 +31,16 @@ automations and scheduling — there is no custom app/PWA.
 | Ground | **Negative (stripe) leg of that cap**; `CN3` GND pin confirmed continuous to it |
 | CN3 header (`IR/GND/5V`) | 5 V pin **dead** on this variant; GND pin usable as ground tap |
 | Buttons (populated) | `SW71` ON/OFF, `SW72` SPEED/MODE, `SW73` oscillation, `SW74` TIMER |
-| Indicator LEDs | Populated but **NOT used** — multiplexed, ~0.9 V lit, awkward to read |
-| IR receiver | Footprint unpopulated — not used |
+| Indicator LEDs | Populated but **NOT used** - multiplexed, ~0.9 V lit, awkward to read |
+| IR receiver | Footprint unpopulated - not used |
 
 ## 3. Confirmed control behaviour (manual + bench)
 
-### 3.1 Power — `SW71`
+### 3.1 Power : `SW71`
 - One press toggles the fan on/off **when the board is "awake"** (LEDs lit).
-- See §3.5 for the awake/asleep double-press rule.
+- See 3.5 for the awake/asleep double-press rule.
 
-### 3.2 Speed / mode — `SW72`
+### 3.2 Speed / mode : `SW72`
 Five-position cycle, **off is NOT in this cycle** (off only via `SW71`):
 ```
 speed 1 → speed 2 → speed 3 → sleep → natural wind → (back to) speed 1
@@ -48,11 +48,11 @@ speed 1 → speed 2 → speed 3 → sleep → natural wind → (back to) speed 1
 - Sleep mode: gradually reduces speed to lowest over ~30 min.
 - Natural wind: varies speed to mimic natural breeze.
 
-### 3.3 Oscillation — `SW73`
+### 3.3 Oscillation : `SW73`
 - Simple on/off toggle. Sweeps up to 90°.
 - "Stop where it is" = toggle OFF → head freezes at current angle.
 
-### 3.4 Timer — `SW74`
+### 3.4 Timer : `SW74`
 - Cycles `1h → 2h → 3h → 4h → 8h → 12h` (plus none), bidirectional
   (ends → turns fan off if on, on if off).
 - **Primary timing is handled by a Home Assistant automation** (more flexible,
@@ -60,10 +60,10 @@ speed 1 → speed 2 → speed 3 → sleep → natural wind → (back to) speed 1
 
 ### 3.5 The awake/asleep LED-timeout rule (critical)
 - Any state change lights the relevant indicator LED(s).
-- LEDs **auto-extinguish ~1 minute** after the last action; the fan keeps
+- LEDs **auto-extinguish in WAKE_THRESHOLD** seconds after the last action; the fan keeps
   running unchanged.
 - **When "awake" (LEDs lit):** the first press of any button performs its action.
-- **When "asleep" (>~1 min idle, LEDs dark):** the first press of ANY button only
+- **When "asleep" (idle, LEDs dark):** the first press of ANY button only
   **wakes** the board (no state change); a **second** press performs the action.
 - This applies to **all four buttons** (confirmed).
 
@@ -87,8 +87,7 @@ low-side-driven matrix. This is: (a) too low to drive a PC817 input (needs >1.1 
 (b) too low for a reliable direct 3.3 V GPIO read; (c) a scanned signal needing
 time-sampling. The hardware+firmware cost of sensing is high while the benefit for
 a fan is marginal (feedback only matters if someone uses the physical buttons, a
-rare and self-correcting case). Decision: **open-loop control, no sensing**
-(Strategy C — see architecture §7). Sensing the single ON LED remains a documented
+rare and self-correcting case). Decision: **open-loop control, no sensing**. Sensing the single ON LED remains a documented
 future upgrade path if power-toggle reliability ever proves annoying.
 
 ## 6. Non-functional requirements
@@ -112,7 +111,7 @@ future upgrade path if power-toggle reliability ever proves annoying.
 | Qty | Part | Model | Purpose |
 | --- | --- | --- | --- |
 | 4 (buy ~10) | Optocoupler | **Sharp PC817** (bare 4-pin DIP) | One per button; output transistor across the button, isolated from ESP32. |
-| 4 | Resistor | ~330 Ω, 1/4 W | Sets PC817 input-LED current from 3.3 V GPIO. |
+| 4 | Resistor | 470 Ω, 1/4 W | Sets PC817 input-LED current from 3.3 V GPIO. |
 
 Wiring per channel: `ESP32 GPIO → 330Ω → PC817 pin1 (anode)`, `PC817 pin2
 (cathode) → ESP32 GND`; `PC817 pin4 (collector) → button MCU-side pad`,
@@ -131,19 +130,17 @@ Wiring per channel: `ESP32 GPIO → 330Ω → PC817 pin1 (anode)`, `PC817 pin2
 ### 7.5 Interconnect & assembly
 | Qty | Part | Spec | Purpose |
 | --- | --- | --- | --- |
-| 1 | Perfboard | ~4×6 cm | Hosts PC817s, resistors, terminal, ESP32 socket. |
+| 1 | Perfboard | 5×7 cm | Hosts PC817s, resistors, terminal, ESP32 socket. |
 | 1 | Screw terminal block | 2.54/5.08 mm | Single disconnect point for fan-board taps. |
 | reel | Signal wire | **30 AWG solid-core, multi-colour** (Kynar wire-wrap) | Button + GND taps and perfboard runs. |
 | short | Power wire | 24–26 AWG (red/black) | 5 V + GND power pair. |
 | — | Solder / flux | 0.5–0.8 mm 63/37; no-clean flux | Fine joints. |
-| — | Kapton tape + hot glue | — | Insulation + strain relief on taps. |
-| — | Heat-shrink | assorted small | Insulate tap wires. |
+| — | Kapton tape  | — | Insulation + strain relief on taps. |
 
 ### 7.6 Tools
 - Temp-controlled fine-tip soldering iron (~320–350 °C)
 - Multimeter (continuity + DC/AC volts)
-- Fine tweezers, PCB holder/helping hands, optional magnifier
-- ESPHome (standalone install on the Pi, accessed at its own IP:port) — used to
+- ESPHome (standalone install on the Pi, accessed at its own IP:port) - used to
   write, compile and flash device firmware
 - 5 V ≥1 A (ideally 2 A) USB supply/power bank for the testing stages
 
@@ -152,7 +149,7 @@ Wiring per channel: `ESP32 GPIO → 330Ω → PC817 pin1 (anode)`, `PC817 pin2
   Assistant OS. HAOS was not used because **AdGuard** already runs on the Pi and
   the Container approach coexists with it.
 - **ESPHome runs standalone** (its own container/service) at its own **IP:port**,
-  reachable directly — it is NOT the HAOS ESPHome add-on. It still integrates with
+  reachable directly - it is NOT the HAOS ESPHome add-on. It still integrates with
   Home Assistant over the device's native API.
 - Consequence for device onboarding: HA may **not auto-discover** the ESP32
   (mDNS/discovery is less reliable under Container/Docker networking). If it does

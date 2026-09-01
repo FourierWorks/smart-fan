@@ -1,8 +1,8 @@
-# Firmware Plan — Smart Fan Retrofit (Philips CX2550/00)
+# Firmware Plan - Smart Fan Retrofit (Philips CX2550/00)
 
-*Algorithm and staging only — no code. Each stage produces an independently
+*Algorithm and staging only - no code. Each stage produces an independently
 verifiable result before the next begins. Built on ESPHome, integrated with Home
-Assistant over the native API. Control is open-loop (Strategy C).*
+Assistant over the native API.*
 
 ## Conventions used in this document
 
@@ -10,7 +10,7 @@ Assistant over the native API. Control is open-loop (Strategy C).*
   Parameters: `PULSE_MS` (how long the opto is on) and `GAP_MS` (pause between
   consecutive presses). Tuned in Stage 2.
 - **`t_idle`** = time since the ESP32's last press (any button).
-- **`WAKE_THRESHOLD`** ≈ 55 s (a margin under the fan's ~60 s LED timeout).
+- **`WAKE_THRESHOLD`** = 5 s if (fan mode == sleep); 60 s otherwise (LED timeout).
 - **Awake** = `t_idle < WAKE_THRESHOLD` (LEDs assumed lit → 1 press acts).
 - **Asleep** = `t_idle ≥ WAKE_THRESHOLD` (first press only wakes; no action).
 - **Model** = the ESP32's assumed fan state: `power_on`, `mode`, `oscillating`.
@@ -19,7 +19,7 @@ Assistant over the native API. Control is open-loop (Strategy C).*
 
 ---
 
-## Stage 0 — Environment & safety baseline
+## Stage 0 : Environment & safety baseline
 
 **Goal:** tooling ready; no fan interaction yet.
 
@@ -35,7 +35,7 @@ Assistant over the native API. Control is open-loop (Strategy C).*
 
 ---
 
-## Stage 1 — Bare board bring-up (network only)
+## Stage 1 : Bare board bring-up (network only)
 
 **Goal:** ESP32 runs ESPHome, joins Wi-Fi, appears in Home Assistant. No fan
 wiring involved.
@@ -56,11 +56,11 @@ wiring involved.
 
 ---
 
-## Stage 2 — One button, one pulse (single-channel actuation)
+## Stage 2 : One button, one pulse (single-channel actuation)
 
 **Goal:** prove the ESP32 → PC817 → fan-button chain physically presses **one**
 button, and tune the pulse timing. Use the **power button (SW71)** as the test
-channel (its effect — fan starting/stopping — is unmistakable).
+channel.
 
 **Prerequisite hardware:** PC817 #1 wired for SW71 (GPIO→330Ω→opto→button node/
 fan GND); ESP32 on USB; fan on mains.
@@ -81,15 +81,14 @@ fan GND); ESP32 on USB; fan on mains.
 - Two fired presses → two toggles (ends where it started), repeatable.
 - `PULSE_MS` and `GAP_MS` values recorded for reuse.
 
-*Note: at this stage ignore awake/asleep — always pre-wake manually. The
+*Note: at this stage ignore awake/asleep ; always pre-wake manually. The
 awake/asleep logic is added in Stage 4.*
 
 ---
 
-## Stage 3 — All four buttons as raw momentary actions
+## Stage 3 : All four buttons as raw momentary actions
 
-**Goal:** each of the four buttons can be individually actuated from HA. Still
-"dumb" — no model, no wake logic — just four reliable press channels.
+**Goal:** each of the four buttons can be individually actuated from HA. 
 
 **Prerequisite hardware:** all 4 PC817s wired (SW71–SW74).
 
@@ -111,9 +110,9 @@ awake/asleep logic is added in Stage 4.*
 
 ---
 
-## Stage 4 — State model + awake/asleep wake logic (the core of Strategy C)
+## Stage 4 : State model + awake/asleep wake logic
 
-**Goal:** introduce the internal model and the `t_idle`-based wake handling, so a
+**Goal:** introduce the internal model and the `t_idle`- based wake handling, so a
 single logical "do X" reliably performs X whether the board is awake or asleep.
 This is the heart of open-loop control.
 
@@ -125,39 +124,26 @@ This is the heart of open-loop control.
 3. Define a **`wake_if_needed()`** routine:
    ```
    if t_idle >= WAKE_THRESHOLD:
-       press(any_button_designated_as_wake)   # performs no action when asleep
-       # (choose SW71? NO — its wake press is harmless only because asleep-first-press
-       #  never acts; but to be safe use a button whose accidental action is least
-       #  harmful. Design decision below.)
+       press(button_to_wake)   # performs no action when asleep
    ```
-   **Wake-button choice:** because *asleep* guarantees the first press of ANY
-   button is action-free, the wake press is safe on any button. To minimise risk
-   if the awake/asleep guess is ever wrong, prefer a button whose unintended
-   single action is least disruptive. Candidate: **SW74 (timer)** — an accidental
-   extra timer step is the most benign misfire (vs. an accidental power toggle or
-   mode change). **Decision: use SW74 as the wake button.**
+   **Wake-button choice** : Same button as action
 4. Define an **`act(button, n=1)`** wrapper:
    ```
    wake_if_needed()
    repeat n times: press(button)  (respecting GAP_MS)
    ```
-5. Boot behaviour (passive default — chosen): on boot press nothing; set
-   `power_on=false`, `mode=unknown`, `oscillating=false`.
+5. Boot behaviour : on boot press nothing; Retain the previous states.
 
 **Independent test / exit criterion:**
 - With the board **awake**, `act(SW71)` toggles power once.
-- Let the board go **asleep** (wait >1 min), then `act(SW71)`: the fan still
-  toggles exactly once (the wake press + the action are handled correctly).
+- Let the board go **asleep**, then `act(SW71)`: the fan still
+  toggles exactly once (the wake press + the action are handled correctly). Test for both wake times (5 s and 60 s)
 - Repeat the asleep test several times → reliable single logical action each time.
-- Confirm the chosen wake button (SW74) produces no net timer change across a
-  wake-then-act sequence when awake (i.e. wake isn't fired when not needed).
 
-*This stage is where you most want to iterate — verify the wake logic thoroughly
-before layering the user-facing controls on top.*
 
 ---
 
-## Stage 5 — Power on/off control (user-facing)
+## Stage 5 : Power on/off control (user-facing)
 
 **Goal:** a Home Assistant on/off control that maps to the model + wake logic.
 
@@ -165,7 +151,7 @@ before layering the user-facing controls on top.*
 1. Expose a `switch` (or `fan` on/off) entity.
 2. On "turn on": if `power_on` is false → `act(SW71)`; set `power_on=true`.
    On "turn off": if `power_on` is true → `act(SW71)`; set `power_on=false`.
-   (If model already matches the request, do nothing — avoids redundant toggles.)
+   (If model already matches the request, do nothing - avoids redundant toggles.)
 
 **Independent test / exit criterion:**
 - From a known off state, HA "on" starts the fan; HA "off" stops it; repeatable
@@ -175,7 +161,7 @@ before layering the user-facing controls on top.*
 
 ---
 
-## Stage 6 — Speed/mode select (5-position ring)
+## Stage 6 : Speed/mode select (5-position ring)
 
 **Goal:** a 5-option selector in HA that lands on the requested mode via computed
 SW72 presses.
@@ -184,7 +170,11 @@ SW72 presses.
 1. Expose a `select` with options: `speed1, speed2, speed3, sleep, natural`.
 2. On selection of `target`:
    ```
-   if not power_on: (decide policy — see below)
+   if not power_on:
+    turn_on()          # presses SW71 once; fan resumes its last mode on its own
+    power_on = true
+    # mode is left untouched here, the hardware already remembers it
+
    steps = forward_distance(mode -> target) in the ring
    act(SW72, n=steps)
    mode = target
@@ -192,29 +182,14 @@ SW72 presses.
    - `forward_distance` counts steps going forward only around
      `speed1→speed2→speed3→sleep→natural→speed1` (e.g. speed3→speed1 = 2 steps:
      natural, speed1).
-   - **`mode == unknown` handling:** if the current mode is unknown (e.g. after
-     boot or drift), first establish an anchor. Policy: perform a full ring's
-     worth of presses is unsafe (overshoots); instead adopt the convention that
-     turning the fan **on** always starts at a known mode. Design choice: on power
-     **on**, assume the board starts at `speed1` (verify this on the actual fan in
-     the test below); set `mode=speed1` at power-on so subsequent targeting is
-     deterministic. If the fan does NOT start at speed1, record its actual
-     power-on mode and use that as the anchor.
-3. **Power-coupling policy:** decide whether selecting a mode while off should
-   first turn the fan on. Recommended: selecting a mode implies "on" — if
-   `power_on` is false, do `turn_on` (Stage 5) first, then target the mode.
+   
 
 **Independent test / exit criterion:**
-- Confirm the fan's **power-on default mode** (turn on from off, observe which mode
-  is active) and record it as the anchor.
-- From each of the five modes, selecting each of the five targets lands correctly
-  (5×5 matrix spot-checked), awake and asleep.
-- Selecting a mode while off turns the fan on and lands on that mode (if
-  power-coupling policy is adopted).
-
+- Turn the fan on from off, off again, then back on repeatedly at different modes, confirming each time that the fan resumes the same mode it was on before it was switched off.
+- From each of the five modes, selecting each of the five targets lands correctly (5x5 matrix spot checked), awake and asleep.
 ---
 
-## Stage 7 — Oscillation toggle ("stop where it is")
+## Stage 7 : Oscillation toggle ("stop where it is")
 
 **Goal:** an on/off control for oscillation.
 
@@ -230,7 +205,7 @@ SW72 presses.
 
 ---
 
-## Stage 8 — Sleep timer (Home Assistant automation — primary path)
+## Stage 8 : Sleep timer (Home Assistant automation - primary path)
 
 **Goal:** configurable sleep timer, implemented in Home Assistant rather than the
 fan's native timer.
@@ -254,7 +229,7 @@ Stage 6's ring logic. Not required for the primary design.
 
 ---
 
-## Stage 9 — Consolidation, guard rails, dashboard, install
+## Stage 9 : Consolidation, guard rails, dashboard, install
 
 **Goal:** harden the logic and finish the user experience, then move to the final
 install.
@@ -265,8 +240,7 @@ install.
    don't overrun the fan's own debounce.
 2. **Chained-command correctness:** verify that issuing several commands in quick
    succession only pays the wake cost once (first command) and all land correctly.
-3. **Threshold tuning:** re-check `WAKE_THRESHOLD` against the fan's real timeout;
-   leave a safe margin.
+3. **Threshold tuning:** re-check `WAKE_THRESHOLD` against the fan's real timeout.
 4. **Dashboard:** arrange power, mode select, oscillation, and sleep-timer controls
    in Home Assistant.
 5. **Resync affordance:** add an HA "resync/known-state" button that drives the fan
@@ -289,14 +263,9 @@ install.
 Each stage adds exactly one new capability on top of a verified base:
 network (1) → one press (2) → four presses (3) → wake logic + model (4) →
 power (5) → mode (6) → oscillation (7) → timer (8) → hardening/install (9).
-If a stage's exit test fails, the fault is isolated to that stage's addition — no
+If a stage's exit test fails, the fault is isolated to that stage's addition ; no
 whole-firmware debugging. Stages 2 and 4 are the highest-value checkpoints:
 Stage 2 proves the physical actuation and timing; Stage 4 proves the open-loop
 awake/asleep model that everything above depends on.
 
-## Open items to resolve during testing (not blockers)
 
-- Confirm the fan's **power-on default mode** (Stage 6 anchor).
-- Final **GPIO pin** assignments.
-- Final **`PULSE_MS` / `GAP_MS`** and **`WAKE_THRESHOLD`** values.
-- Whether selecting a mode should imply power-on (power-coupling policy).

@@ -1,6 +1,6 @@
 # Architecture — Smart Fan Retrofit (Philips CX2550/00)
 
-*Status: locked. Open-loop control (no sensing), Strategy C.*
+
 
 ## 1. Design principle
 
@@ -12,18 +12,19 @@ still work; the whole mod is reversible.
 
 Control is **open-loop**: the ESP32 does not read the fan's LEDs. It maintains an
 internal model of the fan's state and infers the board's awake/asleep condition
-from its own activity timer (Strategy C, §7).
+from its own activity timer.
 
 ## 2. System context
 
+```mermaid
+flowchart LR
+    A[Phone / Browser] -->|Wi-Fi| B[Home Assistant<br/>Raspberry Pi]
+    B -->|Native API / Wi-Fi| C[ESP32<br/>ESPHome]
+    B --- D[UI, Automations,<br/>Scheduling]
+    C -->|Logic-level<br/>button drive + 5V tap| E[Fan Board<br/>FS35-24CR]
+    E -->|Unchanged| F[Motor + Oscillation]
 ```
-  Phone/browser ──Wi-Fi──► Home Assistant (Raspberry Pi) ──native API/Wi-Fi──► ESP32 (ESPHome)
-                                UI, automations,                                   │ logic-level
-                                scheduling                                         │ button drive + 5V tap
-                                                                                   ▼
-                                                                         Fan board FS35-24CR
-                                                                         (unchanged) → motor + oscillation
-```
+
 
 - User interacts only with Home Assistant; HA ↔ ESP32 over the native ESPHome API
   (no MQTT). All local; no cloud.
@@ -36,14 +37,42 @@ A tactile button's MCU-side node sits at ~5 V (pull-up); pressing shorts it to
 GND, read as a press. The ESP32 reproduces that short with a PC817 output
 transistor, isolated from the fan board.
 
-```
-   ESP32 GPIO ──[330Ω]── PC817 pin1 (anode)
-                         PC817 pin2 (cathode) ── ESP32 GND      [input side]
+```mermaid
+flowchart LR
+    subgraph ESP["ESP32 / Input Side"]
+        GPIO["ESP32 GPIO"]
+        R["470 Ω"]
+        A["PC817 Pin 1<br/>Anode"]
+        K["PC817 Pin 2<br/>Cathode"]
+        GND1["ESP32 GND"]
 
-   Button MCU-side pad ── PC817 pin4 (collector)
-   Fan GND            ── PC817 pin3 (emitter)                   [output side]
+        GPIO --> R --> A
+        K --> GND1
+    end
 
-   GPIO HIGH → input LED lit → phototransistor conducts → node pulled to fan GND = press
+    subgraph ISO["PC817 Optocoupler"]
+        LED["Input LED"]
+        T["Phototransistor"]
+        A --> LED --> K
+        T
+        LED -. "Optical isolation" .-> T
+    end
+
+    subgraph FAN["Fan Board / Output Side"]
+        PAD["Button MCU-side pad"]
+        C["PC817 Pin 4<br/>Collector"]
+        E["PC817 Pin 3<br/>Emitter"]
+        GND2["Fan GND"]
+
+        PAD --> C
+        E --> GND2
+    end
+
+    GPIO -. "GPIO HIGH" .-> LED
+    T -. "Conducts" .-> PAD
+    PAD -. "Pulled to fan GND = PRESS" .-> GND2
+
+
 ```
 - 4 channels: `SW71`, `SW72`, `SW73`, `SW74`.
 - Wired in parallel with each physical button → physical buttons still work.
@@ -62,7 +91,7 @@ transistor, isolated from the fan board.
 
 ## 4. Complete wiring map
 
-```
+```mermaid
  ESP32 (socketed) + 4×PC817 + 4×330Ω on perfboard        Fan board (low-voltage side)
  ─────────────────────────────────────────────────       ───────────────────────────
  GPIO_SW71 ─[330Ω]─►PC817#1► collector ──────────────────► SW71 MCU-side pad
@@ -84,8 +113,8 @@ Outputs only (no sensing). Avoid strapping pins for reliability.
 
 | Function | GPIO (suggested) | Notes |
 | --- | --- | --- |
-| Press `SW71` (power) | GPIO25 | output |
-| Press `SW72` (speed/mode) | GPIO26 | output |
+| Press `SW71` (power) | GPIO32 | output |
+| Press `SW72` (speed/mode) | GPIO25 | output |
 | Press `SW73` (oscillation) | GPIO27 | output |
 | Press `SW74` (timer) | GPIO14 | output (optional use) |
 
@@ -107,12 +136,12 @@ OFF. Implemented as ESPHome outputs/actions (design only; no code here).
 
 ### 7.1 State the ESP32 keeps
 - `power_on` (bool) — assumed on/off
-- `mode` (enum: speed1/speed2/speed3/sleep/natural, or "unknown")
+- `mode` (enum: speed1/speed2/speed3/sleep/natural)
 - `oscillating` (bool)
 - `t_idle` — time since the ESP32's last button press (ms)
 
 ### 7.2 Awake/asleep inference (no sensing)
-- `t_idle < WAKE_THRESHOLD` (≈55 s) → board assumed **awake** → 1 press acts.
+- `t_idle < WAKE_THRESHOLD` (5 s if (fan mode == sleep); 60 s otherwise) → board assumed **awake** → 1 press acts.
 - `t_idle ≥ WAKE_THRESHOLD` → board assumed **asleep** → first press only wakes;
   a wake press must be prepended before any acting press.
 - **Every** button press resets `t_idle = 0` (any press re-lights LEDs).
@@ -120,14 +149,13 @@ OFF. Implemented as ESPHome outputs/actions (design only; no code here).
 
 ### 7.3 Boot behaviour (passive default — chosen)
 - On boot the ESP32 presses **nothing**.
-- It sets the model to a default (`power_on = false`, `mode = unknown`,
-  `oscillating = false`).
+- It retains the model state as previous just like the fan would behave.
 - The first real user command syncs intent. No spurious toggling at boot
   (e.g. after a power blip). Model may be wrong until the first command — accepted.
 
 ### 7.4 Accepted limitations
 - Human use of physical buttons drifts the model until the next HA command.
-- The `WAKE_THRESHOLD` inference can misfire at the ~1 min boundary or under human
+- The `WAKE_THRESHOLD` inference can misfire at the boundary or under human
   interference; effect self-corrects on the next command. Recovery: re-issue the
   command, or toggle power via HA to re-establish.
 
@@ -139,8 +167,7 @@ prepend one wake press (which performs no action), then continue.
 - **Power:** wake-if-needed → 1 press `SW71` → flip `power_on`.
 - **Mode:** wake-if-needed → compute forward steps in ring
   `speed1→speed2→speed3→sleep→natural→speed1` from `mode` to target → that many
-  `SW72` presses → set `mode`. (If `mode == unknown`, resolve per firmware plan §
-  — e.g. cycle to a known anchor first.)
+  `SW72` presses → set `mode`. 
 - **Oscillation:** wake-if-needed → 1 press `SW73` → flip `oscillating`.
 - **Timer:** handled by HA automation (delayed power command). Optional native
   path: wake-if-needed → cycle `SW74` to target.
@@ -163,11 +190,3 @@ prepend one wake press (which performs no action), then continue.
 6. Verify in HA: power, 5-way mode select, oscillation, timer automation.
 7. Cut ESP32 power over to the fan 5 V rail; reassemble.
 
-## 11. Deviations from earlier drafts (for reviewer)
-- **No PWA / web server** — replaced by Home Assistant + ESPHome.
-- **No relays / mains switching** — logic-level button presses instead.
-- **No IR** — receiver footprint unpopulated; no remote.
-- **No LED sensing** — 0.9 V multiplexed signal; open-loop chosen.
-- **Strategy C** — activity-timer inference of awake/asleep; passive boot default.
-- **5 V logic** confirmed (not 3.3 V) — affects button node levels, handled by PC817.
-- **No MQTT** — native ESPHome API.

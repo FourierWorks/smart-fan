@@ -116,6 +116,15 @@ number:
     step: 5
     initial_value: 60
     mode: box
+  - platform: template
+    name: "Wake Threshold Sleep Mode s"
+    id: wake_threshold_sleep_s
+    optimistic: true
+    min_value: 2
+    max_value: 30
+    step: 1
+    initial_value: 5
+    mode: box
 
 # ================= CORE PRESS SCRIPT =================
 script:
@@ -132,9 +141,12 @@ script:
       - lambda: |-
           bool need_wake = false;
           if (!is_power_on_cmd) {
+            float threshold_s = (id(fan_mode) == 4)
+                ? id(wake_threshold_sleep_s).state
+                : id(wake_threshold_s).state;
             need_wake = id(never_pressed) ||
                 ((millis() - id(last_press_ms)) >=
-                 (uint32_t)(id(wake_threshold_s).state * 1000.0));
+                 (uint32_t)(threshold_s * 1000.0));
           }
           id(pending_wake) = need_wake;
       - if:
