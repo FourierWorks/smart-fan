@@ -91,20 +91,9 @@ flowchart LR
 
 ## 4. Complete wiring map
 
-```mermaid
- ESP32 (socketed) + 4×PC817 + 4×330Ω on perfboard        Fan board (low-voltage side)
- ─────────────────────────────────────────────────       ───────────────────────────
- GPIO_SW71 ─[330Ω]─►PC817#1► collector ──────────────────► SW71 MCU-side pad
- GPIO_SW72 ─[330Ω]─►PC817#2► collector ──────────────────► SW72 MCU-side pad
- GPIO_SW73 ─[330Ω]─►PC817#3► collector ──────────────────► SW73 MCU-side pad
- GPIO_SW74 ─[330Ω]─►PC817#4► collector ──────────────────► SW74 MCU-side pad
- (all PC817 emitters) ───────────────────────────────────► fan GND
- (all PC817 cathodes) ── ESP32 GND
+[View Schematic](./Perfboard_Connection.SchDoc)
 
- ESP32 5V/VIN ◄────────────── power ─────────────────────  centre cap +leg (5V)
- ESP32 GND    ◄───────────────────────────────────────────  cap stripe leg / CN3 GND
-```
-- ~7 wires total: 4 button signals, 1 fan-GND (shared by emitters), 2 power.
+- 6 wires total: 4 switch button signals, 1 fan-GND (shared by emitters), 1 power.
 - All land on a **screw terminal block**; ESP32 plugs into female headers.
 
 ## 5. GPIO planning (AZ-Delivery ESP32-S DevKit C V4 = classic ESP32)

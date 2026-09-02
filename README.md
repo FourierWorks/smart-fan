@@ -66,9 +66,9 @@ native timer button).
 | Interface board | Small perfboard hosting the ESP32 socket, optocouplers, and a screw terminal to the fan-board taps |
 
 Note: the fan's buttons only respond to a single press if the
-board is "awake" (its indicators recently lit). After roughly a minute of
+board is "awake" (its indicators recently lit). After roughly 5 secs (for sleep mode) or a minute (for all other modes/actions) of
 inactivity the board goes to sleep, and the first press on any button only
-wakes it — a second press is needed to actually act. The firmware accounts for
+wakes it ; a second press is needed to actually act. The firmware accounts for
 this automatically.
 
 ## Software
