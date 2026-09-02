@@ -93,6 +93,8 @@ flowchart LR
 
 [View Schematic](./Perfboard_Connection.SchDoc)
 
+<img src="connection_diagram.jpg" width="800">
+
 - 6 wires total: 4 switch button signals, 1 fan-GND (shared by emitters), 1 power.
 - All land on a **screw terminal block**; ESP32 plugs into female headers.
 
